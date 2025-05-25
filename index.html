@@ -1,20 +1,46 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>3D Map: Nearest Post Office</title>
+  <title>3D Map Post Office Viewer</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <script src="https://unpkg.com/maplibre-gl@2.4.0/dist/maplibre-gl.js"></script>
   <link href="https://unpkg.com/maplibre-gl@2.4.0/dist/maplibre-gl.css" rel="stylesheet" />
   <style>
-    html, body { margin: 0; padding: 0; height: 100%; }
+    html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; }
     #map { position: absolute; top: 0; bottom: 0; width: 100%; }
+    #enableMotion {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      padding: 10px 15px;
+      background: #000;
+      color: #fff;
+      border: none;
+      font-size: 16px;
+      z-index: 999;
+      display: none;
+    }
   </style>
 </head>
 <body>
+
 <div id="map"></div>
+<button id="enableMotion">Enable Motion Tracking</button>
 
 <script>
   const maptilerKey = 'KtkfQkx8DxnyjkBQfUeS';
+  let marker = null;
+  let targetBearing = null;
+
+  function getBearing(lat1, lon1, lat2, lon2) {
+    const toRad = deg => deg * Math.PI / 180;
+    const toDeg = rad => rad * 180 / Math.PI;
+    const dLon = toRad(lon2 - lon1);
+    const y = Math.sin(dLon) * Math.cos(toRad(lat2));
+    const x = Math.cos(toRad(lat1)) * Math.sin(toRad(lat2)) -
+              Math.sin(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.cos(dLon);
+    return (toDeg(Math.atan2(y, x)) + 360) % 360;
+  }
 
   navigator.geolocation.getCurrentPosition(async (pos) => {
     const { latitude, longitude } = pos.coords;
@@ -46,52 +72,74 @@
       });
     });
 
-    // Query Overpass API for nearby post office
-    const radiusMeters = 1500;
     const query = `
       [out:json];
       (
-        node["amenity"="post_office"](around:${radiusMeters},${latitude},${longitude});
-        way["amenity"="post_office"](around:${radiusMeters},${latitude},${longitude});
+        node["amenity"="post_office"](around:1500,${latitude},${longitude});
+        way["amenity"="post_office"](around:1500,${latitude},${longitude});
       );
       out center 1;
     `;
 
     const res = await fetch('https://overpass-api.de/api/interpreter', {
       method: 'POST',
-      body: query,
+      body: query
     });
 
     const data = await res.json();
-
-    if (data.elements && data.elements.length > 0) {
-      // Sort by distance
-      const closest = data.elements.map(el => {
-        const lat = el.lat || el.center?.lat;
-        const lon = el.lon || el.center?.lon;
-        const d = Math.sqrt(Math.pow(lat - latitude, 2) + Math.pow(lon - longitude, 2));
-        return { lat, lon, d };
-      }).sort((a, b) => a.d - b.d)[0];
-
-      new maplibregl.Marker({ color: 'red' })
-        .setLngLat([closest.lon, closest.lat])
-        .setPopup(new maplibregl.Popup().setText("Nearest Post Office"))
-        .addTo(map);
-    } else {
+    if (!data.elements || data.elements.length === 0) {
       alert("No post office found nearby.");
+      return;
     }
 
-    // Rotate map with phone orientation
-    window.addEventListener('deviceorientation', (event) => {
-      if (event.alpha != null) {
-        map.rotateTo(360 - event.alpha, { duration: 0 });
+    const target = data.elements[0];
+    const targetLat = target.lat || target.center.lat;
+    const targetLon = target.lon || target.center.lon;
+    targetBearing = getBearing(latitude, longitude, targetLat, targetLon);
+
+    marker = new maplibregl.Marker({ color: 'red' })
+      .setLngLat([targetLon, targetLat])
+      .setPopup(new maplibregl.Popup().setText("Nearest Post Office"));
+
+    function handleOrientation(event) {
+      let heading = event.alpha;
+      if (typeof heading !== 'number') return;
+      heading = 360 - heading;
+
+      const fov = 30;
+      const delta = Math.abs(targetBearing - heading);
+      const angleDiff = Math.min(delta, 360 - delta);
+
+      if (angleDiff <= fov) {
+        if (!marker._map) marker.addTo(map);
+      } else {
+        if (marker._map) marker.remove();
       }
-    });
+
+      map.rotateTo(heading, { duration: 0 });
+    }
+
+    // iOS motion permission
+    const btn = document.getElementById('enableMotion');
+    if (typeof DeviceOrientationEvent?.requestPermission === 'function') {
+      btn.style.display = 'block';
+      btn.onclick = () => {
+        DeviceOrientationEvent.requestPermission().then(response => {
+          if (response === 'granted') {
+            window.addEventListener('deviceorientation', handleOrientation, true);
+            btn.remove();
+          }
+        });
+      };
+    } else {
+      window.addEventListener('deviceorientation', handleOrientation, true);
+    }
 
   }, (err) => {
     alert("Geolocation is required.");
     console.error(err);
   });
 </script>
+
 </body>
 </html>
