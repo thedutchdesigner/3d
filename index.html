@@ -1,54 +1,56 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>AR Post Office Finder</title>
+  <title>AR Line to Nearest Post Office</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <style>
     html, body {
-      margin: 0; padding: 0; height: 100%;
-      background: black; overflow: hidden;
+      margin: 0; padding: 0; height: 100%; overflow: hidden; background: black;
     }
     video {
       position: fixed; top: 0; left: 0;
       width: 100%; height: 100%;
-      object-fit: cover; z-index: 0;
+      object-fit: cover;
+      z-index: 0;
     }
-    #marker, #arrow {
-      position: fixed;
-      top: 50%; left: 50%;
+    #poi {
+      position: absolute;
       width: 60px; height: 60px;
       margin-left: -30px; margin-top: -30px;
+      background: url('https://cdn-icons-png.flaticon.com/512/684/684908.png') no-repeat center center;
       background-size: contain;
-      background-repeat: no-repeat;
       z-index: 2;
       display: none;
     }
-    #marker {
-      background-image: url('https://cdn-icons-png.flaticon.com/512/684/684908.png');
-    }
-    #arrow {
-      background-image: url('https://cdn-icons-png.flaticon.com/512/130/130882.png');
+    #line {
+      position: absolute;
+      width: 2px;
+      background: red;
+      transform-origin: bottom center;
+      z-index: 1;
+      display: none;
     }
     #distanceLabel {
       position: fixed;
       bottom: 20px;
       left: 50%;
       transform: translateX(-50%);
-      background: rgba(0, 0, 0, 0.7);
+      background: rgba(0,0,0,0.7);
       color: white;
-      padding: 8px 12px;
-      border-radius: 8px;
+      padding: 6px 10px;
+      border-radius: 6px;
       font-family: sans-serif;
       z-index: 3;
       display: none;
     }
     #enableMotion {
       position: absolute;
-      top: 10px; left: 10px;
+      top: 10px;
+      left: 10px;
+      z-index: 4;
       padding: 10px;
       background: black;
       color: white;
-      z-index: 4;
       display: none;
     }
   </style>
@@ -56,38 +58,100 @@
 <body>
 
 <video id="camera" autoplay playsinline></video>
-<div id="marker"></div>
-<div id="arrow"></div>
+<div id="poi"></div>
+<div id="line"></div>
 <div id="distanceLabel"></div>
 <button id="enableMotion">Enable Motion Tracking</button>
 
 <script>
-  let targetBearing = null;
-  let userLat = null;
-  let userLon = null;
-  let targetLat = null;
-  let targetLon = null;
+  let userLat, userLon;
+  let poiLat, poiLon;
+  let heading = 0;
 
-  function getBearing(lat1, lon1, lat2, lon2) {
-    const toRad = deg => deg * Math.PI / 180;
-    const toDeg = rad => rad * 180 / Math.PI;
-    const dLon = toRad(lon2 - lon1);
-    const y = Math.sin(dLon) * Math.cos(toRad(lat2));
-    const x = Math.cos(toRad(lat1)) * Math.sin(toRad(lat2)) -
-              Math.sin(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.cos(dLon);
-    return (toDeg(Math.atan2(y, x)) + 360) % 360;
-  }
+  function toRadians(deg) { return deg * Math.PI / 180; }
+  function toDegrees(rad) { return rad * 180 / Math.PI; }
 
   function getDistance(lat1, lon1, lat2, lon2) {
-    const R = 6371000; // meters
-    const dLat = (lat2 - lat1) * Math.PI / 180;
-    const dLon = (lon2 - lon1) * Math.PI / 180;
-    const a = Math.sin(dLat / 2) ** 2 +
-              Math.cos(lat1 * Math.PI / 180) *
-              Math.cos(lat2 * Math.PI / 180) *
-              Math.sin(dLon / 2) ** 2;
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    return Math.round(R * c);
+    const R = 6371000; // Earth radius in meters
+    const dLat = toRadians(lat2 - lat1);
+    const dLon = toRadians(lon2 - lon1);
+    const a = Math.sin(dLat/2) ** 2 +
+              Math.cos(toRadians(lat1)) * Math.cos(toRadians(lat2)) *
+              Math.sin(dLon/2) ** 2;
+    return Math.round(R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
+  }
+
+  function getBearing(lat1, lon1, lat2, lon2) {
+    const y = Math.sin(toRadians(lon2 - lon1)) * Math.cos(toRadians(lat2));
+    const x = Math.cos(toRadians(lat1)) * Math.sin(toRadians(lat2)) -
+              Math.sin(toRadians(lat1)) * Math.cos(toRadians(lat2)) *
+              Math.cos(toRadians(lon2 - lon1));
+    return (toDegrees(Math.atan2(y, x)) + 360) % 360;
+  }
+
+  function updateUI() {
+    if (!userLat || !userLon || !poiLat || !poiLon) return;
+
+    const bearingToPOI = getBearing(userLat, userLon, poiLat, poiLon);
+    const relativeAngle = (bearingToPOI - heading + 360) % 360;
+
+    const distance = getDistance(userLat, userLon, poiLat, poiLon);
+
+    // Position the POI marker and line
+    const screenWidth = window.innerWidth;
+    const screenHeight = window.innerHeight;
+    const centerX = screenWidth / 2;
+    const centerY = screenHeight / 2;
+
+    const maxAngle = 45; // ±45° is within screen
+    const offsetX = (relativeAngle > 180 ? relativeAngle - 360 : relativeAngle);
+    if (Math.abs(offsetX) <= maxAngle) {
+      const x = centerX + (offsetX / maxAngle) * centerX * 0.8;
+
+      const poi = document.getElementById('poi');
+      poi.style.left = `${x}px`;
+      poi.style.top = `${centerY - 120}px`;
+      poi.style.display = 'block';
+
+      const line = document.getElementById('line');
+      line.style.left = `${x}px`;
+      line.style.top = `${centerY}px`;
+      line.style.height = `120px`;
+      line.style.transform = `translateX(-1px) rotate(0deg)`;
+      line.style.display = 'block';
+    } else {
+      document.getElementById('poi').style.display = 'none';
+      document.getElementById('line').style.display = 'none';
+    }
+
+    // Update distance label
+    const label = document.getElementById('distanceLabel');
+    label.textContent = `${distance} meters`;
+    label.style.display = 'block';
+  }
+
+  function setupOrientationTracking() {
+    const handler = (event) => {
+      if (typeof event.alpha === 'number') {
+        heading = (360 - event.alpha + 90) % 360;
+        updateUI();
+      }
+    };
+
+    if (typeof DeviceOrientationEvent?.requestPermission === 'function') {
+      const btn = document.getElementById('enableMotion');
+      btn.style.display = 'block';
+      btn.onclick = () => {
+        DeviceOrientationEvent.requestPermission().then((resp) => {
+          if (resp === 'granted') {
+            window.addEventListener('deviceorientation', handler, true);
+            btn.remove();
+          }
+        });
+      };
+    } else {
+      window.addEventListener('deviceorientation', handler, true);
+    }
   }
 
   async function getNearestPostOffice(lat, lon) {
@@ -106,100 +170,52 @@
     const data = await res.json();
     if (!data.elements.length) return null;
 
-    let closest = null;
-    let minDist = Infinity;
-
-    for (let el of data.elements) {
-      const lat2 = el.lat || el.center?.lat;
-      const lon2 = el.lon || el.center?.lon;
-      const dist = getDistance(lat, lon, lat2, lon2);
-      if (dist < minDist) {
-        minDist = dist;
-        closest = { lat: lat2, lon: lon2, dist };
+    let best = null, min = Infinity;
+    for (const el of data.elements) {
+      const lat2 = el.lat || el.center.lat;
+      const lon2 = el.lon || el.center.lon;
+      const d = getDistance(lat, lon, lat2, lon2);
+      if (d < min) {
+        min = d;
+        best = { lat: lat2, lon: lon2 };
       }
     }
-
-    return closest;
-  }
-
-  function setupOrientationTracking() {
-    function handleOrientation(event) {
-      let heading = event.alpha;
-      if (typeof heading !== 'number' || targetBearing === null) return;
-
-      heading = (360 - heading + 90) % 360; // Adjust to compass heading
-
-      const delta = Math.abs(targetBearing - heading);
-      const angleDiff = Math.min(delta, 360 - delta);
-
-      const inFOV = angleDiff <= 15;
-      const marker = document.getElementById('marker');
-      const arrow = document.getElementById('arrow');
-      const distLabel = document.getElementById('distanceLabel');
-
-      if (inFOV) {
-        marker.style.display = 'block';
-        arrow.style.display = 'none';
-      } else {
-        marker.style.display = 'none';
-        arrow.style.display = 'block';
-        arrow.style.transform = `translate(-50%, -50%) rotate(${targetBearing - heading}deg)`;
-      }
-
-      distLabel.style.display = 'block';
-    }
-
-    if (typeof DeviceOrientationEvent?.requestPermission === 'function') {
-      const btn = document.getElementById('enableMotion');
-      btn.style.display = 'block';
-      btn.onclick = () => {
-        DeviceOrientationEvent.requestPermission().then(response => {
-          if (response === 'granted') {
-            window.addEventListener('deviceorientation', handleOrientation, true);
-            btn.remove();
-          }
-        });
-      };
-    } else {
-      window.addEventListener('deviceorientation', handleOrientation, true);
-    }
+    return best;
   }
 
   async function init() {
+    // Start rear camera
     const video = document.getElementById('camera');
-
-    // Start camera
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
       video.srcObject = stream;
     } catch (err) {
-      alert("Camera access denied.");
+      alert("Camera access is required.");
       return;
     }
 
-    // Get GPS location
-    navigator.geolocation.getCurrentPosition(async (pos) => {
+    // Watch position continuously
+    navigator.geolocation.watchPosition(async (pos) => {
       userLat = pos.coords.latitude;
       userLon = pos.coords.longitude;
 
-      const poi = await getNearestPostOffice(userLat, userLon);
-      if (!poi) {
-        alert("No post office nearby.");
-        return;
+      if (!poiLat || !poiLon) {
+        const poi = await getNearestPostOffice(userLat, userLon);
+        if (!poi) {
+          alert("No post office nearby.");
+          return;
+        }
+        poiLat = poi.lat;
+        poiLon = poi.lon;
       }
 
-      targetLat = poi.lat;
-      targetLon = poi.lon;
-      targetBearing = getBearing(userLat, userLon, targetLat, targetLon);
-
-      const distance = getDistance(userLat, userLon, targetLat, targetLon);
-      document.getElementById('distanceLabel').textContent = `${distance} meters`;
-
-      setupOrientationTracking();
+      updateUI();
     }, (err) => {
-      alert("Geolocation required.");
+      alert("Location required.");
       console.error(err);
     });
+
+    setupOrientationTracking();
   }
 
   init();
