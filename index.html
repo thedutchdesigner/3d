@@ -1,26 +1,111 @@
 
 <!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <title>AR Route to Post Office</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <style>
-    html, body { margin: 0; padding: 0; overflow: hidden; }
-    canvas { display: block; }
-    #ui {
-      position: fixed;
-      top: 10px; left: 10px;
-      z-index: 999;
-      background: rgba(0,0,0,0.7);
-      color: white;
-      padding: 8px;
-      font-family: sans-serif;
-    }
-  </style>
-</head>
-<body>
-  <div id="ui">Loading AR route…</div>
-  <script type="module" src="./main.js"></script>
-</body>
+<html>
+  <head>
+    <title>AR.js Post Office Route</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+    <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
+    <script src="https://unpkg.com/aframe-ar@1.8.2/dist/aframe-ar.min.js"></script>
+    <style>
+      body { margin: 0; overflow: hidden; }
+      #distance-label {
+        position: fixed;
+        bottom: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: rgba(0, 0, 0, 0.7);
+        color: white;
+        padding: 8px 12px;
+        font-family: sans-serif;
+        border-radius: 8px;
+        z-index: 2;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="distance-label">Loading route...</div>
+    <a-scene
+      vr-mode-ui="enabled: false"
+      embedded
+      arjs="sourceType: webcam; gpsMinAccuracy: 100; debugUIEnabled: false;">
+      <a-camera gps-camera rotation-reader></a-camera>
+    </a-scene>
+
+    <script>
+      const label = document.getElementById('distance-label');
+      const apiKey = '5b3ce3597851110001cf62481c238f30d3654010b5b928a885fc6c6c';
+
+      async function getNearestPostOffice(lat, lon) {
+        const query = `[out:json];
+          node["amenity"="post_office"](around:2000,${lat},${lon});
+          out center 1;`;
+        const res = await fetch('https://overpass-api.de/api/interpreter', {
+          method: 'POST',
+          body: query
+        });
+        const data = await res.json();
+        const el = data.elements[0];
+        return {
+          lat: el.lat || el.center.lat,
+          lon: el.lon || el.center.lon
+        };
+      }
+
+      async function getWalkingRoute(startLat, startLon, endLat, endLon) {
+        const res = await fetch(`https://api.openrouteservice.org/v2/directions/foot-walking?api_key=${apiKey}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            coordinates: [[startLon, startLat], [endLon, endLat]]
+          })
+        });
+        const data = await res.json();
+        return data.features[0].geometry.coordinates;
+      }
+
+      function addPOIMarkers(coords) {
+        coords.forEach(([lon, lat], i) => {
+          const el = document.createElement('a-image');
+          el.setAttribute('gps-entity-place', `latitude: ${lat}; longitude: ${lon};`);
+          el.setAttribute('src', 'https://cdn-icons-png.flaticon.com/512/684/684908.png');
+          el.setAttribute('look-at', '[gps-camera]');
+          el.setAttribute('height', '3');
+          el.setAttribute('width', '3');
+          el.setAttribute('scale', '4 4 4');
+          el.setAttribute('position', '0 1 0');
+          document.querySelector('a-scene').appendChild(el);
+        });
+      }
+
+      function getDistance(lat1, lon1, lat2, lon2) {
+        const R = 6371000;
+        const dLat = (lat2 - lat1) * Math.PI / 180;
+        const dLon = (lon2 - lon1) * Math.PI / 180;
+        const a = Math.sin(dLat / 2) ** 2 +
+                  Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                  Math.sin(dLon / 2) ** 2;
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        return Math.round(R * c);
+      }
+
+      window.onload = () => {
+        const camera = document.querySelector('[gps-camera]');
+        camera.addEventListener('gps-camera-update-position', async (e) => {
+          const { latitude, longitude } = e.detail.position;
+          if (!window.routeAdded) {
+            window.routeAdded = true;
+            const poi = await getNearestPostOffice(latitude, longitude);
+            const coords = await getWalkingRoute(latitude, longitude, poi.lat, poi.lon);
+            addPOIMarkers(coords);
+            label.innerText = "Route loaded. Start walking.";
+            window.route = coords;
+            window.target = coords[coords.length - 1];
+          } else if (window.target) {
+            const dist = getDistance(latitude, longitude, window.target[1], window.target[0]);
+            label.innerText = `Distance to target: ${dist} meters`;
+          }
+        });
+      };
+    </script>
+  </body>
 </html>
