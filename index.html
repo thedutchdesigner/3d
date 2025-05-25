@@ -1,36 +1,60 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>3D Map Post Office Viewer</title>
+  <title>AR Post Office Finder</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <script src="https://unpkg.com/maplibre-gl@2.4.0/dist/maplibre-gl.js"></script>
-  <link href="https://unpkg.com/maplibre-gl@2.4.0/dist/maplibre-gl.css" rel="stylesheet" />
   <style>
-    html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; }
-    #map { position: absolute; top: 0; bottom: 0; width: 100%; }
+    body, html {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      height: 100%;
+      background: black;
+    }
+    video {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      z-index: 0;
+    }
+    #marker {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      width: 50px;
+      height: 50px;
+      margin-left: -25px;
+      margin-top: -25px;
+      background: url('https://cdn-icons-png.flaticon.com/512/684/684908.png') no-repeat center center;
+      background-size: contain;
+      display: none;
+      z-index: 2;
+    }
     #enableMotion {
       position: absolute;
       top: 10px;
       left: 10px;
-      padding: 10px 15px;
-      background: #000;
-      color: #fff;
-      border: none;
-      font-size: 16px;
-      z-index: 999;
+      padding: 10px;
+      background: black;
+      color: white;
+      z-index: 3;
       display: none;
     }
   </style>
 </head>
 <body>
 
-<div id="map"></div>
+<video id="camera" autoplay playsinline></video>
+<div id="marker"></div>
 <button id="enableMotion">Enable Motion Tracking</button>
 
 <script>
-  const maptilerKey = 'KtkfQkx8DxnyjkBQfUeS';
-  let marker = null;
   let targetBearing = null;
+  let userLat = null;
+  let userLon = null;
 
   function getBearing(lat1, lon1, lat2, lon2) {
     const toRad = deg => deg * Math.PI / 180;
@@ -42,86 +66,44 @@
     return (toDeg(Math.atan2(y, x)) + 360) % 360;
   }
 
-  navigator.geolocation.getCurrentPosition(async (pos) => {
-    const { latitude, longitude } = pos.coords;
-
-    const map = new maplibregl.Map({
-      container: 'map',
-      style: `https://api.maptiler.com/maps/streets/style.json?key=${maptilerKey}`,
-      center: [longitude, latitude],
-      zoom: 16,
-      pitch: 60,
-      bearing: 0,
-      antialias: true
-    });
-
-    map.on('load', () => {
-      map.addLayer({
-        id: '3d-buildings',
-        source: 'openmaptiles',
-        'source-layer': 'building',
-        filter: ['==', 'extrude', 'true'],
-        type: 'fill-extrusion',
-        minzoom: 15,
-        paint: {
-          'fill-extrusion-color': '#aaa',
-          'fill-extrusion-height': ['get', 'height'],
-          'fill-extrusion-base': ['get', 'min_height'],
-          'fill-extrusion-opacity': 0.6
-        }
-      });
-    });
-
+  async function getNearestPostOffice(lat, lon) {
     const query = `
       [out:json];
       (
-        node["amenity"="post_office"](around:1500,${latitude},${longitude});
-        way["amenity"="post_office"](around:1500,${latitude},${longitude});
+        node["amenity"="post_office"](around:1500,${lat},${lon});
+        way["amenity"="post_office"](around:1500,${lat},${lon});
       );
       out center 1;
     `;
-
     const res = await fetch('https://overpass-api.de/api/interpreter', {
       method: 'POST',
       body: query
     });
-
     const data = await res.json();
-    if (!data.elements || data.elements.length === 0) {
-      alert("No post office found nearby.");
-      return;
-    }
+    if (!data.elements.length) return null;
 
-    const target = data.elements[0];
-    const targetLat = target.lat || target.center.lat;
-    const targetLon = target.lon || target.center.lon;
-    targetBearing = getBearing(latitude, longitude, targetLat, targetLon);
+    const el = data.elements[0];
+    const lat2 = el.lat || el.center.lat;
+    const lon2 = el.lon || el.center.lon;
 
-    marker = new maplibregl.Marker({ color: 'red' })
-      .setLngLat([targetLon, targetLat])
-      .setPopup(new maplibregl.Popup().setText("Nearest Post Office"));
+    return { lat: lat2, lon: lon2 };
+  }
 
+  function setupOrientationTracking() {
     function handleOrientation(event) {
       let heading = event.alpha;
-      if (typeof heading !== 'number') return;
-      heading = 360 - heading;
+      if (typeof heading !== 'number' || targetBearing === null) return;
 
-      const fov = 30;
+      heading = 360 - heading;
       const delta = Math.abs(targetBearing - heading);
       const angleDiff = Math.min(delta, 360 - delta);
+      const inFOV = angleDiff <= 15;
 
-      if (angleDiff <= fov) {
-        if (!marker._map) marker.addTo(map);
-      } else {
-        if (marker._map) marker.remove();
-      }
-
-      map.rotateTo(heading, { duration: 0 });
+      document.getElementById('marker').style.display = inFOV ? 'block' : 'none';
     }
 
-    // iOS motion permission
-    const btn = document.getElementById('enableMotion');
     if (typeof DeviceOrientationEvent?.requestPermission === 'function') {
+      const btn = document.getElementById('enableMotion');
       btn.style.display = 'block';
       btn.onclick = () => {
         DeviceOrientationEvent.requestPermission().then(response => {
@@ -134,12 +116,38 @@
     } else {
       window.addEventListener('deviceorientation', handleOrientation, true);
     }
+  }
 
-  }, (err) => {
-    alert("Geolocation is required.");
-    console.error(err);
-  });
+  async function init() {
+    // Start camera
+    const video = document.getElementById('camera');
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+      video.srcObject = stream;
+    } catch (err) {
+      alert("Camera access denied.");
+      console.error(err);
+    }
+
+    // Get location
+    navigator.geolocation.getCurrentPosition(async (pos) => {
+      userLat = pos.coords.latitude;
+      userLon = pos.coords.longitude;
+      const postOffice = await getNearestPostOffice(userLat, userLon);
+      if (!postOffice) {
+        alert("No post office nearby.");
+        return;
+      }
+
+      targetBearing = getBearing(userLat, userLon, postOffice.lat, postOffice.lon);
+      setupOrientationTracking();
+    }, (err) => {
+      alert("Location is required.");
+      console.error(err);
+    });
+  }
+
+  init();
 </script>
-
 </body>
 </html>
