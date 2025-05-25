@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>AR Post Office Finder</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    html, body {
+      margin: 0; padding: 0; height: 100%;
+      background: black; overflow: hidden;
+    }
+    video {
+      position: fixed; top: 0; left: 0;
+      width: 100%; height: 100%;
+      object-fit: cover; z-index: 0;
+    }
+    #marker, #arrow {
+      position: fixed;
+      top: 50%; left: 50%;
+      width: 60px; height: 60px;
+      margin-left: -30px; margin-top: -30px;
+      background-size: contain;
+      background-repeat: no-repeat;
+      z-index: 2;
+      display: none;
+    }
+    #marker {
+      background-image: url('https://cdn-icons-png.flaticon.com/512/684/684908.png');
+    }
+    #arrow {
+      background-image: url('https://cdn-icons-png.flaticon.com/512/130/130882.png');
+    }
+    #distanceLabel {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0, 0, 0, 0.7);
+      color: white;
+      padding: 8px 12px;
+      border-radius: 8px;
+      font-family: sans-serif;
+      z-index: 3;
+      display: none;
+    }
+    #enableMotion {
+      position: absolute;
+      top: 10px; left: 10px;
+      padding: 10px;
+      background: black;
+      color: white;
+      z-index: 4;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+
+<video id="camera" autoplay playsinline></video>
+<div id="marker"></div>
+<div id="arrow"></div>
+<div id="distanceLabel"></div>
+<button id="enableMotion">Enable Motion Tracking</button>
+
+<script>
+  let targetBearing = null;
+  let userLat = null;
+  let userLon = null;
+  let targetLat = null;
+  let targetLon = null;
+
+  function getBearing(lat1, lon1, lat2, lon2) {
+    const toRad = deg => deg * Math.PI / 180;
+    const toDeg = rad => rad * 180 / Math.PI;
+    const dLon = toRad(lon2 - lon1);
+    const y = Math.sin(dLon) * Math.cos(toRad(lat2));
+    const x = Math.cos(toRad(lat1)) * Math.sin(toRad(lat2)) -
+              Math.sin(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.cos(dLon);
+    return (toDeg(Math.atan2(y, x)) + 360) % 360;
+  }
+
+  function getDistance(lat1, lon1, lat2, lon2) {
+    const R = 6371000; // meters
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat / 2) ** 2 +
+              Math.cos(lat1 * Math.PI / 180) *
+              Math.cos(lat2 * Math.PI / 180) *
+              Math.sin(dLon / 2) ** 2;
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return Math.round(R * c);
+  }
+
+  async function getNearestPostOffice(lat, lon) {
+    const query = `
+      [out:json];
+      (
+        node["amenity"="post_office"](around:2000,${lat},${lon});
+        way["amenity"="post_office"](around:2000,${lat},${lon});
+      );
+      out center;
+    `;
+    const res = await fetch('https://overpass-api.de/api/interpreter', {
+      method: 'POST',
+      body: query
+    });
+    const data = await res.json();
+    if (!data.elements.length) return null;
+
+    let closest = null;
+    let minDist = Infinity;
+
+    for (let el of data.elements) {
+      const lat2 = el.lat || el.center?.lat;
+      const lon2 = el.lon || el.center?.lon;
+      const dist = getDistance(lat, lon, lat2, lon2);
+      if (dist < minDist) {
+        minDist = dist;
+        closest = { lat: lat2, lon: lon2, dist };
+      }
+    }
+
+    return closest;
+  }
+
+  function setupOrientationTracking() {
+    function handleOrientation(event) {
+      let heading = event.alpha;
+      if (typeof heading !== 'number' || targetBearing === null) return;
+
+      heading = (360 - heading + 90) % 360; // Adjust to compass heading
+
+      const delta = Math.abs(targetBearing - heading);
+      const angleDiff = Math.min(delta, 360 - delta);
+
+      const inFOV = angleDiff <= 15;
+      const marker = document.getElementById('marker');
+      const arrow = document.getElementById('arrow');
+      const distLabel = document.getElementById('distanceLabel');
+
+      if (inFOV) {
+        marker.style.display = 'block';
+        arrow.style.display = 'none';
+      } else {
+        marker.style.display = 'none';
+        arrow.style.display = 'block';
+        arrow.style.transform = `translate(-50%, -50%) rotate(${targetBearing - heading}deg)`;
+      }
+
+      distLabel.style.display = 'block';
+    }
+
+    if (typeof DeviceOrientationEvent?.requestPermission === 'function') {
+      const btn = document.getElementById('enableMotion');
+      btn.style.display = 'block';
+      btn.onclick = () => {
+        DeviceOrientationEvent.requestPermission().then(response => {
+          if (response === 'granted') {
+            window.addEventListener('deviceorientation', handleOrientation, true);
+            btn.remove();
+          }
+        });
+      };
+    } else {
+      window.addEventListener('deviceorientation', handleOrientation, true);
+    }
+  }
+
+  async function init() {
+    const video = document.getElementById('camera');
+
+    // Start camera
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+      video.srcObject = stream;
+    } catch (err) {
+      alert("Camera access denied.");
+      return;
+    }
+
+    // Get GPS location
+    navigator.geolocation.getCurrentPosition(async (pos) => {
+      userLat = pos.coords.latitude;
+      userLon = pos.coords.longitude;
+
+      const poi = await getNearestPostOffice(userLat, userLon);
+      if (!poi) {
+        alert("No post office nearby.");
+        return;
+      }
+
+      targetLat = poi.lat;
+      targetLon = poi.lon;
+      targetBearing = getBearing(userLat, userLon, targetLat, targetLon);
+
+      const distance = getDistance(userLat, userLon, targetLat, targetLon);
+      document.getElementById('distanceLabel').textContent = `${distance} meters`;
+
+      setupOrientationTracking();
+    }, (err) => {
+      alert("Geolocation required.");
+      console.error(err);
+    });
+  }
+
+  init();
+</script>
+
+</body>
+</html>
