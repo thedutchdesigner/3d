@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>3D Map: Nearest Post Office</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <script src="https://unpkg.com/maplibre-gl@2.4.0/dist/maplibre-gl.js"></script>
+  <link href="https://unpkg.com/maplibre-gl@2.4.0/dist/maplibre-gl.css" rel="stylesheet" />
+  <style>
+    html, body { margin: 0; padding: 0; height: 100%; }
+    #map { position: absolute; top: 0; bottom: 0; width: 100%; }
+  </style>
+</head>
+<body>
+<div id="map"></div>
+
+<script>
+  const maptilerKey = 'KtkfQkx8DxnyjkBQfUeS';
+
+  navigator.geolocation.getCurrentPosition(async (pos) => {
+    const { latitude, longitude } = pos.coords;
+
+    const map = new maplibregl.Map({
+      container: 'map',
+      style: `https://api.maptiler.com/maps/streets/style.json?key=${maptilerKey}`,
+      center: [longitude, latitude],
+      zoom: 16,
+      pitch: 60,
+      bearing: 0,
+      antialias: true
+    });
+
+    map.on('load', () => {
+      map.addLayer({
+        id: '3d-buildings',
+        source: 'openmaptiles',
+        'source-layer': 'building',
+        filter: ['==', 'extrude', 'true'],
+        type: 'fill-extrusion',
+        minzoom: 15,
+        paint: {
+          'fill-extrusion-color': '#aaa',
+          'fill-extrusion-height': ['get', 'height'],
+          'fill-extrusion-base': ['get', 'min_height'],
+          'fill-extrusion-opacity': 0.6
+        }
+      });
+    });
+
+    // Query Overpass API for nearby post office
+    const radiusMeters = 1500;
+    const query = `
+      [out:json];
+      (
+        node["amenity"="post_office"](around:${radiusMeters},${latitude},${longitude});
+        way["amenity"="post_office"](around:${radiusMeters},${latitude},${longitude});
+      );
+      out center 1;
+    `;
+
+    const res = await fetch('https://overpass-api.de/api/interpreter', {
+      method: 'POST',
+      body: query,
+    });
+
+    const data = await res.json();
+
+    if (data.elements && data.elements.length > 0) {
+      // Sort by distance
+      const closest = data.elements.map(el => {
+        const lat = el.lat || el.center?.lat;
+        const lon = el.lon || el.center?.lon;
+        const d = Math.sqrt(Math.pow(lat - latitude, 2) + Math.pow(lon - longitude, 2));
+        return { lat, lon, d };
+      }).sort((a, b) => a.d - b.d)[0];
+
+      new maplibregl.Marker({ color: 'red' })
+        .setLngLat([closest.lon, closest.lat])
+        .setPopup(new maplibregl.Popup().setText("Nearest Post Office"))
+        .addTo(map);
+    } else {
+      alert("No post office found nearby.");
+    }
+
+    // Rotate map with phone orientation
+    window.addEventListener('deviceorientation', (event) => {
+      if (event.alpha != null) {
+        map.rotateTo(360 - event.alpha, { duration: 0 });
+      }
+    });
+
+  }, (err) => {
+    alert("Geolocation is required.");
+    console.error(err);
+  });
+</script>
+</body>
+</html>
