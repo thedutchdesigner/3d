@@ -2,10 +2,10 @@
 <!DOCTYPE html>
 <html>
   <head>
-    <title>AR.js Post Office Route</title>
+    <title>AR.js Post Office Route (Debugged)</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
     <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
-<script src="https://raw.githack.com/AR-js-org/AR.js/3.4.2/aframe/build/aframe-ar.js"></script>
+    <script src="https://raw.githack.com/AR-js-org/AR.js/3.4.2/aframe/build/aframe-ar.min.js"></script>
     <style>
       body { margin: 0; overflow: hidden; }
       #status, #distance-label {
@@ -37,7 +37,7 @@
     <script>
       const statusLabel = document.getElementById('status');
       const distanceLabel = document.getElementById('distance-label');
-      const apiKey = '5b3ce3597851110001cf62481c238f30d3654010b5b928a885fc6c6c'; // OpenRouteService API key (keep this active)
+      const apiKey = '5b3ce3597851110001cf62481c238f30d3654010b5b928a885fc6c6c'; // OpenRouteService API key
 
       async function getNearestPostOffice(lat, lon) {
         const query = `[out:json];
@@ -94,8 +94,14 @@
 
       window.onload = () => {
         const camera = document.querySelector('[gps-camera]');
+        let gpsTimeout = setTimeout(() => {
+          statusLabel.innerText = "Still waiting for GPS... Are permissions enabled?";
+        }, 10000);
+
         camera.addEventListener('gps-camera-update-position', async (e) => {
+          clearTimeout(gpsTimeout);
           const { latitude, longitude } = e.detail.position;
+          console.log("GPS position received:", latitude, longitude);
           statusLabel.innerText = `GPS locked: ${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
 
           if (!window.routeAdded) {
@@ -103,19 +109,21 @@
             statusLabel.innerText = "Fetching route...";
             try {
               const poi = await getNearestPostOffice(latitude, longitude);
+              console.log("Nearest POI:", poi);
               const coords = await getWalkingRoute(latitude, longitude, poi.lat, poi.lon);
+              console.log("Route coordinates:", coords);
               addPOIMarkers(coords);
               statusLabel.innerText = "Route loaded.";
-              distanceLabel.innerText = "Route markers placed.";
+              distanceLabel.innerText = "Markers placed.";
               window.route = coords;
               window.target = coords[coords.length - 1];
             } catch (err) {
-              statusLabel.innerText = "Failed to load route.";
-              console.error(err);
+              statusLabel.innerText = "Route load failed.";
+              console.error("Route loading error:", err);
             }
           } else if (window.target) {
             const dist = getDistance(latitude, longitude, window.target[1], window.target[0]);
-            distanceLabel.innerText = `Distance to destination: ${dist} meters`;
+            distanceLabel.innerText = `Distance: ${dist} meters`;
           }
         });
       };
