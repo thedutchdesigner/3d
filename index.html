@@ -1,225 +1,26 @@
+
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>AR Line to Nearest Post Office</title>
+  <meta charset="UTF-8" />
+  <title>AR Route to Post Office</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <style>
-    html, body {
-      margin: 0; padding: 0; height: 100%; overflow: hidden; background: black;
-    }
-    video {
-      position: fixed; top: 0; left: 0;
-      width: 100%; height: 100%;
-      object-fit: cover;
-      z-index: 0;
-    }
-    #poi {
-      position: absolute;
-      width: 60px; height: 60px;
-      margin-left: -30px; margin-top: -30px;
-      background: url('https://cdn-icons-png.flaticon.com/512/684/684908.png') no-repeat center center;
-      background-size: contain;
-      z-index: 2;
-      display: none;
-    }
-    #line {
-      position: absolute;
-      width: 2px;
-      background: red;
-      transform-origin: bottom center;
-      z-index: 1;
-      display: none;
-    }
-    #distanceLabel {
+    html, body { margin: 0; padding: 0; overflow: hidden; }
+    canvas { display: block; }
+    #ui {
       position: fixed;
-      bottom: 20px;
-      left: 50%;
-      transform: translateX(-50%);
+      top: 10px; left: 10px;
+      z-index: 999;
       background: rgba(0,0,0,0.7);
       color: white;
-      padding: 6px 10px;
-      border-radius: 6px;
+      padding: 8px;
       font-family: sans-serif;
-      z-index: 3;
-      display: none;
-    }
-    #enableMotion {
-      position: absolute;
-      top: 10px;
-      left: 10px;
-      z-index: 4;
-      padding: 10px;
-      background: black;
-      color: white;
-      display: none;
     }
   </style>
 </head>
 <body>
-
-<video id="camera" autoplay playsinline></video>
-<div id="poi"></div>
-<div id="line"></div>
-<div id="distanceLabel"></div>
-<button id="enableMotion">Enable Motion Tracking</button>
-
-<script>
-  let userLat, userLon;
-  let poiLat, poiLon;
-  let heading = 0;
-
-  function toRadians(deg) { return deg * Math.PI / 180; }
-  function toDegrees(rad) { return rad * 180 / Math.PI; }
-
-  function getDistance(lat1, lon1, lat2, lon2) {
-    const R = 6371000; // Earth radius in meters
-    const dLat = toRadians(lat2 - lat1);
-    const dLon = toRadians(lon2 - lon1);
-    const a = Math.sin(dLat/2) ** 2 +
-              Math.cos(toRadians(lat1)) * Math.cos(toRadians(lat2)) *
-              Math.sin(dLon/2) ** 2;
-    return Math.round(R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
-  }
-
-  function getBearing(lat1, lon1, lat2, lon2) {
-    const y = Math.sin(toRadians(lon2 - lon1)) * Math.cos(toRadians(lat2));
-    const x = Math.cos(toRadians(lat1)) * Math.sin(toRadians(lat2)) -
-              Math.sin(toRadians(lat1)) * Math.cos(toRadians(lat2)) *
-              Math.cos(toRadians(lon2 - lon1));
-    return (toDegrees(Math.atan2(y, x)) + 360) % 360;
-  }
-
-  function updateUI() {
-    if (!userLat || !userLon || !poiLat || !poiLon) return;
-
-    const bearingToPOI = getBearing(userLat, userLon, poiLat, poiLon);
-    const relativeAngle = (bearingToPOI - heading + 360) % 360;
-
-    const distance = getDistance(userLat, userLon, poiLat, poiLon);
-
-    // Position the POI marker and line
-    const screenWidth = window.innerWidth;
-    const screenHeight = window.innerHeight;
-    const centerX = screenWidth / 2;
-    const centerY = screenHeight / 2;
-
-    const maxAngle = 45; // ±45° is within screen
-    const offsetX = (relativeAngle > 180 ? relativeAngle - 360 : relativeAngle);
-    if (Math.abs(offsetX) <= maxAngle) {
-      const x = centerX + (offsetX / maxAngle) * centerX * 0.8;
-
-      const poi = document.getElementById('poi');
-      poi.style.left = `${x}px`;
-      poi.style.top = `${centerY - 120}px`;
-      poi.style.display = 'block';
-
-      const line = document.getElementById('line');
-      line.style.left = `${x}px`;
-      line.style.top = `${centerY}px`;
-      line.style.height = `120px`;
-      line.style.transform = `translateX(-1px) rotate(0deg)`;
-      line.style.display = 'block';
-    } else {
-      document.getElementById('poi').style.display = 'none';
-      document.getElementById('line').style.display = 'none';
-    }
-
-    // Update distance label
-    const label = document.getElementById('distanceLabel');
-    label.textContent = `${distance} meters`;
-    label.style.display = 'block';
-  }
-
-  function setupOrientationTracking() {
-    const handler = (event) => {
-      if (typeof event.alpha === 'number') {
-        heading = (360 - event.alpha + 90) % 360;
-        updateUI();
-      }
-    };
-
-    if (typeof DeviceOrientationEvent?.requestPermission === 'function') {
-      const btn = document.getElementById('enableMotion');
-      btn.style.display = 'block';
-      btn.onclick = () => {
-        DeviceOrientationEvent.requestPermission().then((resp) => {
-          if (resp === 'granted') {
-            window.addEventListener('deviceorientation', handler, true);
-            btn.remove();
-          }
-        });
-      };
-    } else {
-      window.addEventListener('deviceorientation', handler, true);
-    }
-  }
-
-  async function getNearestPostOffice(lat, lon) {
-    const query = `
-      [out:json];
-      (
-        node["amenity"="post_office"](around:2000,${lat},${lon});
-        way["amenity"="post_office"](around:2000,${lat},${lon});
-      );
-      out center;
-    `;
-    const res = await fetch('https://overpass-api.de/api/interpreter', {
-      method: 'POST',
-      body: query
-    });
-    const data = await res.json();
-    if (!data.elements.length) return null;
-
-    let best = null, min = Infinity;
-    for (const el of data.elements) {
-      const lat2 = el.lat || el.center.lat;
-      const lon2 = el.lon || el.center.lon;
-      const d = getDistance(lat, lon, lat2, lon2);
-      if (d < min) {
-        min = d;
-        best = { lat: lat2, lon: lon2 };
-      }
-    }
-    return best;
-  }
-
-  async function init() {
-    // Start rear camera
-    const video = document.getElementById('camera');
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-      video.srcObject = stream;
-    } catch (err) {
-      alert("Camera access is required.");
-      return;
-    }
-
-    // Watch position continuously
-    navigator.geolocation.watchPosition(async (pos) => {
-      userLat = pos.coords.latitude;
-      userLon = pos.coords.longitude;
-
-      if (!poiLat || !poiLon) {
-        const poi = await getNearestPostOffice(userLat, userLon);
-        if (!poi) {
-          alert("No post office nearby.");
-          return;
-        }
-        poiLat = poi.lat;
-        poiLon = poi.lon;
-      }
-
-      updateUI();
-    }, (err) => {
-      alert("Location required.");
-      console.error(err);
-    });
-
-    setupOrientationTracking();
-  }
-
-  init();
-</script>
-
+  <div id="ui">Loading AR route…</div>
+  <script type="module" src="./main.js"></script>
 </body>
 </html>
