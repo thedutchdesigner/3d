@@ -1,6 +1,6 @@
 
-import * as THREE from 'https://cdn.skypack.dev/three@0.154.0';
-import { ARButton } from 'https://cdn.skypack.dev/three@0.154.0/examples/jsm/webxr/ARButton.js';
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.154.0/build/three.module.js';
+import { ARButton } from 'https://cdn.jsdelivr.net/npm/three@0.154.0/examples/jsm/webxr/ARButton.js';
 
 const apiKey = '5b3ce3597851110001cf62481c238f30d3654010b5b928a885fc6c6c';
 
