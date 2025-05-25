@@ -5,7 +5,7 @@
     <title>AR.js Post Office Route</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
     <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
-<script src="https://raw.githack.com/AR-js-org/AR.js/3.4.2/aframe/build/aframe-ar.min.js"></script>
+    <script src="https://raw.githack.com/AR-js-org/AR.js/3.4.2/aframe/build/aframe-ar.min.js"></script>
     <style>
       body { margin: 0; overflow: hidden; }
       #status, #distance-label {
@@ -37,7 +37,7 @@
     <script>
       const statusLabel = document.getElementById('status');
       const distanceLabel = document.getElementById('distance-label');
-      const apiKey = '5b3ce3597851110001cf62481c238f30d3654010b5b928a885fc6c6c';
+      const apiKey = '5b3ce3597851110001cf62481c238f30d3654010b5b928a885fc6c6c'; // OpenRouteService API key (keep this active)
 
       async function getNearestPostOffice(lat, lon) {
         const query = `[out:json];
